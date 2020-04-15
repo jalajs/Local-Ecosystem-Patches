@@ -1,15 +1,10 @@
-# !/usr/bin/env python
+# !/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # %% Simple selector (MySQL database)
-# import mysql.connector needs to be installed pip install mysql-connector
-import pandas
 import pymysql
-from flask import Flask
 import datetime
 import pandas as pd
-
-app = Flask(__name__)
 
 print("Welcome to our local ecosystems database.")
 print("Enter your MySQL username and password.")
@@ -77,6 +72,9 @@ def create_species():
     try:
         cur = cnx.cursor()
         print("Species name, scientific name, type, and kingdom are required. Group is optional.")
+        decision = input("Enter b to go back or anything else to continue: ")
+        if decision == "b":
+            start_program()
         name = verify_str_input("Name: ")
         s_name = verify_str_input("Scientific Name: ")
         s_type = verify_str_input("Type: ")
@@ -100,16 +98,20 @@ def create_species():
 def create_wherespecies():
     try:
         cur = cnx.cursor()
-        get_species()
-        print("Species' scientific name and subregion id are required. Attribute is optional. Scientific and common "
-              "names of "
-              "species listed above.")
-        more = input("Press m if you'd like to see the subregions table\n")
+        subregions = get_subregion()
+        species_list = get_species()
+        print("Species' scientific name and subregion id are required. Attribute is optional.")
+        more = input("Enter m to see the subregion table and species scientific/common name, b to go back, "
+                     "or anything else to continue: ")
         if more == "m":
-            get_subregion()
+            print_subregion()
+            print_species()
+        elif more == "b":
+            start_program()
 
-        name = verify_str_input("Name: ")
-        s_id = verify_int_input("Subregion ID: ")
+        print("Enter the scientific name and subregion ID. Must be an existing species and subregion.")
+        name = get_valid_name(species_list)
+        s_id = get_valid_subregion(subregions)
         attribute = verify_optional_input("Attribute (optional): ")
         if attribute == "":
             cur.callproc("create_where2", [name, s_id])
@@ -119,7 +121,7 @@ def create_wherespecies():
         else:
             cur.callproc("create_where3", [name, s_id, attribute])
             cnx.commit()
-            print(name, '-', s_id, "added to the species table.")
+            print(name, '-', s_id, "added to the species table with", attribute, "as its attribute.")
             cur.close()
 
     except pymysql.Error as e:
@@ -129,15 +131,17 @@ def create_wherespecies():
 def create_subregion():
     try:
         cur = cnx.cursor()
+        subregion_ids = get_subregion()
         print("You can create a new row in the subregion table with a new date for resampling. Just provide the id of "
               "the subregion and the new date.")
-        more = input("Press m if you'd like to see the subregions table\n")
+        more = input("Enter m if you would like to view the subregion table, b to go back, or anything else to "
+                     "continue: ")
         if more == "m":
-            get_subregion()
-
-        s_id = verify_int_input("Subregion ID: ")
+            print_subregion()
+        elif more == "b":
+            start_program()
+        s_id = get_valid_subregion(subregion_ids)
         date = verify_date("Date (YYYY-MM-DD): ")
-
         cur.callproc("create_subdate", [s_id, date])
         cnx.commit()
         print(s_id, " with new date", date, "added to the species table.")
@@ -172,14 +176,16 @@ def select_species():
     try:
         print("You can view all species in a particular subregion")
         cur = cnx.cursor()
-        more = input("Press m if you'd like to see the subregions\n")
+        more = input("Enter m if you'd like to see the subregions, b to go back, or anything else to continue: ")
         if more == "m":
-            get_subregion()
-        s_id = verify_str_input("Please enter the subregion name: ")
-        cur.callproc("view_species", [s_id.capitalize()])
+            print_subregion()
+        elif more == "b":
+            start_program()
+        s_name = verify_str_input("Please enter the subregion name: ")
+        cur.callproc("view_species", [s_name.capitalize()])
         rows = cur.fetchall()
         if cur.rowcount == 0:
-            print("No species recorded in the subregion.")
+            print("No species recorded in the given subregion.")
             cur.close()
         else:
             df = pd.DataFrame(rows)
@@ -216,6 +222,7 @@ def select_subregion():
         rows = cur.fetchall()
         df = pd.DataFrame(rows)
         df = df.set_index("id")
+        pd.set_option('display.width', 1000)
         with pd.option_context('display.max_rows', None, 'display.max_columns', None):
             print(df)
         cur.close()
@@ -249,16 +256,15 @@ def update_action():
 def update_species():
     try:
         cur = cnx.cursor()
-        print("Scientific and common names of species in the table:")
+        print("Enter the scientific name of the species you would like to change.")
+        more = input("Enter m to see the common names associated with scientific names, b to go back, or anything "
+                     "else to continue: ")
+        if more == "m":
+            print_species()
+        elif more == "b":
+            start_program()
         species_list = get_species()
-        species = input(
-            "Enter the scientific name of the species that you would like to change the common name for (case "
-            "insensitive).\n").lower()
-        while species not in species_list:
-            print("Given species does not exist in the table. Try again.")
-            species = input(
-                "Enter the scientific name of the species that you would like change the common name for (case "
-                "insensitive)\n").lower()
+        species = get_valid_name(species_list)
         new_species = verify_str_input("Enter the new common name: ")
         cur.callproc("update_species", [new_species, species])
         cnx.commit()
@@ -272,67 +278,19 @@ def update_species():
 def update_wherespecies():
     try:
         cur = cnx.cursor()
-        print("wherespecies table:")
-        wherespecies_dictionary = get_wherespecies()
-        more = input("Press m if you'd like to see the subregion table.\n")
+        print("Enter an existing tuple in the wherespecies table to update.")
+        more = input("Enter m to view the wherespecies table, b to go back, or anything else to continue: ")
         if more == "m":
-            get_subregion()
-        wherespecies_name = input("Enter the scientific name of the species in wherespecies that you would like to "
-                                  "update (case insensitive).\n")
-        wherespecies_id = int(input("Enter the corresponding subregion id.\n"))
-        while wherespecies_dictionary.get(wherespecies_id) != wherespecies_name.lower():
-            print("Invalid wherespecies name/id pair. Try again.")
-            wherespecies_name = input("Enter the scientific name of the species in wherespecies that you would like to "
-                                      "update (case insensitive).\n")
-            wherespecies_id = int(input("Enter the corresponding subregion id.\n"))
+            print_wherespecies()
+        elif more == "b":
+            start_program()
+        wherespecies_list = get_wherespecies()
+        wherespecies_name, wherespecies_id = get_valid_wherespecies(wherespecies_list)
         new_name = verify_str_input("Enter the new common name: ")
         cur.callproc("update_where", [new_name, wherespecies_id, wherespecies_name])
         cnx.commit()
         print("Common name for", wherespecies_name.capitalize(), "located in subregion", wherespecies_id, "changed to",
               new_name)
-        cur.close()
-
-    except pymysql.Error as e:
-        print('Error: %d: %s' % (e.args[0], e.args[1]))
-
-
-def update_water():
-    try:
-        cur = cnx.cursor()
-        print("subregion table")
-        subregion_ids = get_subregion()
-        subregion = verify_int_input(
-            "Enter the subregion ID for the subregion whose water field you would like to update: ")
-        while subregion not in subregion_ids:
-            print("Given subregion does not exist in the table. Try again.")
-            subregion = verify_int_input("Enter the subregion ID for the subregion whose water field you would like to "
-                                         "update: ")
-        new_water = verify_str_input("Enter the new water value: ")
-        cur.callproc("update_subregion_water", [new_water, subregion])
-        cnx.commit()
-        print(subregion, "'s water field changed to ", new_water)
-        cur.close()
-
-    except pymysql.Error as e:
-        print('Error: %d: %s' % (e.args[0], e.args[1]))
-
-
-def update_location():
-    try:
-        cur = cnx.cursor()
-        print("subregion table")
-        subregion_ids = get_subregion()
-        subregion = verify_int_input(
-            "Enter the subregion ID for the subregion whose location you would like to update: ")
-        while subregion not in subregion_ids:
-            print("Given subregion does not exist in the table. Try again.")
-            subregion = verify_int_input("Enter the subregion ID for the subregion whose location you would like to "
-                                         "update: ")
-        new_latc = verify_float_input("Enter the new latitude value: ")
-        new_longc = verify_float_input("Enter the new longitude value: ")
-        cur.callproc("update_subregion_location", [new_latc, new_longc, subregion])
-        cnx.commit()
-        print(subregion, "'s location field changed to ", new_latc, ",", new_longc)
         cur.close()
 
     except pymysql.Error as e:
@@ -352,6 +310,49 @@ def update_subregion():
             start_program()
         else:
             print("Invalid input. Try again.")
+
+
+def update_water():
+    try:
+        cur = cnx.cursor()
+        print("Enter the subregion ID for the subregion whose water field you would like to update: ")
+        more = input("Enter m to view the subregion table, b to go back, or anything else to continue: ")
+        if more == "m":
+            print_subregion()
+        elif more == "b":
+            start_program()
+        subregion_ids = get_subregion()
+        subregion = get_valid_subregion(subregion_ids)
+        new_water = verify_str_input("Enter the new water value: ")
+        cur.callproc("update_subregion_water", [new_water, subregion])
+        cnx.commit()
+        print(subregion, "'s water field changed to ", new_water)
+        cur.close()
+
+    except pymysql.Error as e:
+        print('Error: %d: %s' % (e.args[0], e.args[1]))
+
+
+def update_location():
+    try:
+        cur = cnx.cursor()
+        print("Enter the subregion ID for the subregion whose location you would like to update: ")
+        more = input("Enter m to view the subregion table, b to go back, or anything else to continue: ")
+        if more == "m":
+            print_subregion()
+        elif more == "b":
+            start_program()
+        subregion_ids = get_subregion()
+        subregion = get_valid_subregion(subregion_ids)
+        new_latc = verify_float_input("Enter the new latitude value: ")
+        new_longc = verify_float_input("Enter the new longitude value: ")
+        cur.callproc("update_subregion_location", [new_latc, new_longc, subregion])
+        cnx.commit()
+        print(subregion, "'s location field changed to ", new_latc, ",", new_longc)
+        cur.close()
+
+    except pymysql.Error as e:
+        print('Error: %d: %s' % (e.args[0], e.args[1]))
 
 
 ######################################################################################################################
@@ -378,14 +379,14 @@ def delete_action():
 def delete_species():
     try:
         cur = cnx.cursor()
-        print("Scientific and common names of species in the table:")
         species_list = get_species()
-        species = input(
-            "Enter the scientific name of the species that you would like to delete (case insensitive).\n").lower()
-        while species not in species_list:
-            print("Given species does not exist in the table. Try again.")
-            species = input(
-                "Enter the scientific name of the species that you would like to delete (case insensitive)\n").lower()
+        print("Enter a valid species from the species table that you would like to delete.")
+        more = input("Enter m to see the species table, b to go back, or anything else to continue: ")
+        if more == "m":
+            print_species()
+        elif more == "b":
+            start_program()
+        species = get_valid_name(species_list)
         cur.callproc("delete_species", [species])
         cnx.commit()
         print(species.capitalize(), "deleted from the table.")
@@ -398,20 +399,15 @@ def delete_species():
 def delete_wherespecies():
     try:
         cur = cnx.cursor()
-        print("Scientific names and associated subregion id's (wherespecies table):")
-        wherespecies_dictionary = get_wherespecies()
-        wherespecies_name = input("Enter the scientific name of the species that you would like to "
-                                  "delete (case insensitive).\n")
-        wherespecies_id = verify_int_input("Enter the corresponding subregion id of the species that you would like "
-                                           "to delete\n")
+        wherespecies_list = get_wherespecies()
+        print("Enter an existing tuple in the wherespecies table to delete.")
+        more = input("Enter m to view the wherespecies table, b to go back, or anything else to continue: ")
+        if more == "m":
+            print_wherespecies()
+        elif more == "b":
+            start_program()
 
-        while wherespecies_dictionary.get(wherespecies_id) != wherespecies_name.lower():
-            print("Invalid wherespecies name/id pair. Try again.")
-            wherespecies_name = input(
-                "Enter the scientific name of the wherespecies that you would like to delete (case insensitive).\n")
-            wherespecies_id = verify_int_input(
-                "Enter the corresponding subregion id of the species that you would like to delete.\n")
-
+        wherespecies_name, wherespecies_id = get_valid_wherespecies(wherespecies_list)
         cur.callproc("delete_where", [wherespecies_name.lower(), wherespecies_id])
         cnx.commit()
         print(wherespecies_name.capitalize(), " -", wherespecies_id, "deleted from the table.")
@@ -424,12 +420,15 @@ def delete_wherespecies():
 def delete_subregion():
     try:
         cur = cnx.cursor()
-        print("subregion table")
         subregion_ids = get_subregion()
-        subregion = verify_int_input("Enter the subregion ID for the subregion you would like to delete ")
-        while subregion not in subregion_ids:
-            print("Given subregion does not exist in the table. Try again.")
-            subregion = verify_int_input("Enter the subregion ID for the subregion you would like to delete ")
+        print("Enter the subregion ID for the subregion you would like to delete ")
+        more = input("Enter m if you would like to view the subregion table, b to go back, or anything else to "
+                     "continue: ")
+        if more == "m":
+            print_subregion()
+        elif more == "b":
+            start_program()
+        subregion = get_valid_subregion(subregion_ids)
         cur.callproc("delete_subregion", [subregion])
         cnx.commit()
         print(subregion, "subregion deleted from the table.")
@@ -442,7 +441,86 @@ def delete_subregion():
 ######################################################################################################################
 # HELPER FUNCTIONS
 
-# Prints the species table and returns all of the scientific names in an array
+# ensure the user inputs an existing species and returns it
+def get_valid_name(species_list):
+    name = verify_str_input("Name: ")
+    while name.lower() not in species_list:
+        print("Given species does not exist in the table. Try again.")
+        name = verify_str_input("Name: ")
+    return name
+
+
+# ensures the user inputs an existing subregion and returns it
+def get_valid_subregion(subregions):
+    s_id = verify_int_input("Subregion ID: ")
+    while s_id not in subregions:
+        print("Given subregion does not exist in the table. Try again.")
+        s_id = verify_int_input("Subregion ID: ")
+    return s_id
+
+
+# ensure the user input a valid wherespecies and returns the name and subregion ID.
+def get_valid_wherespecies(wherespecies_list):
+    wherespecies_name = verify_str_input("Scientific name: ")
+    wherespecies_id = verify_int_input("Enter the corresponding subregion id: ")
+    while (wherespecies_id, wherespecies_name) not in wherespecies_list:
+        print("Invalid wherespecies name/id pair. Try again.")
+        wherespecies_name = verify_str_input("Scientific name: ")
+        wherespecies_id = verify_int_input("Enter the corresponding subregion id: ")
+
+    return wherespecies_name, wherespecies_id
+
+
+# Prints the scientific and common name rows in the species table
+def print_species():
+    try:
+        cur = cnx.cursor()
+        stmt_select = "select scientific, common_name from species"
+        cur.execute(stmt_select)
+        for row in cur.fetchall():
+            print(row["scientific"], '-', row["common_name"])
+
+        cur.close()
+
+    except pymysql.Error as e:
+        print('Error: %d: %s' % (e.args[0], e.args[1]))
+
+
+# Prints the wherespecies table
+def print_wherespecies():
+    try:
+        cur = cnx.cursor()
+        stmt_select = "select species, subregion from wherespecies"
+        cur.execute(stmt_select)
+        for row in cur.fetchall():
+            print(row["species"], "-", row["subregion"])
+
+        cur.close()
+
+    except pymysql.Error as e:
+        print('Error: %d: %s' % (e.args[0], e.args[1]))
+
+
+# prints most of the fields in the subregion table
+def print_subregion():
+    try:
+        cur = cnx.cursor()
+        stmt_select = "select name, id, latc, longc, water, recorddate from subregion"
+        cur.execute(stmt_select)
+        rows = cur.fetchall()
+        df = pd.DataFrame(rows)
+        df = df.set_index("id")
+        pd.set_option('display.width', 1000)
+        with pd.option_context('display.max_rows', None, 'display.max_columns', None):
+            print(df)
+
+        cur.close()
+
+    except pymysql.Error as e:
+        print('Error: %d: %s' % (e.args[0], e.args[1]))
+
+
+# returns all of the scientific names in an array
 def get_species():
     global species_array
     try:
@@ -451,7 +529,6 @@ def get_species():
         cur.execute(stmt_select)
         species_array = []
         for row in cur.fetchall():
-            print(row["scientific"], '-', row["common_name"])
             species_array.append(row["scientific"].lower())
 
         cur.close()
@@ -462,27 +539,26 @@ def get_species():
     return species_array
 
 
-# Prints the wherespecies table and returns all of the scientific names and associated subregions in a dictionary
+# returns all of the scientific names and associated subregions in a list of tuples
 def get_wherespecies():
-    global wherespecies_dict
+    global wherespecies_list_tups
     try:
         cur = cnx.cursor()
         stmt_select = "select species, subregion from wherespecies"
         cur.execute(stmt_select)
-        wherespecies_dict = dict()
+        wherespecies_list_tups = []
         for row in cur.fetchall():
-            print(row["species"], "-", row["subregion"])
-            wherespecies_dict.update({row["subregion"]: row["species"].lower()})
+            wherespecies_list_tups.append((row["subregion"], row["species"]))
 
         cur.close()
 
     except pymysql.Error as e:
         print('Error: %d: %s' % (e.args[0], e.args[1]))
 
-    return wherespecies_dict
+    return wherespecies_list_tups
 
 
-# Prints the subregion table and returns all of the subregion id's in an array
+#  returns all of the subregion id's in an array
 def get_subregion():
     global subregion_array
     try:
@@ -493,10 +569,6 @@ def get_subregion():
         rows = cur.fetchall()
         for row in rows:
             subregion_array.append(row["id"])
-        df = pd.DataFrame(rows)
-        df = df.set_index("id")
-        with pd.option_context('display.max_rows', None, 'display.max_columns', None):
-            print(df)
 
         cur.close()
 
@@ -566,12 +638,3 @@ def verify_optional_input(prompt):
 
 cnx = make_connection()  # prompt the user for MySQL credentials and connect to the database
 start_program()  # start our application
-
-
-@app.route("/")
-def main():
-    return "Welcome!"
-
-
-if __name__ == "__main__":
-    app.run()
